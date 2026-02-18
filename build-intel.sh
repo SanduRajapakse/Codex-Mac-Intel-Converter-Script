@@ -50,6 +50,14 @@ cleanup() {
     hdiutil detach "${MOUNT_POINT}" >/dev/null 2>&1 || hdiutil detach -force "${MOUNT_POINT}" >/dev/null 2>&1 || true
   fi
 
+  if [[ -n "${LOG_TEE_PID:-}" ]]; then
+    kill "${LOG_TEE_PID}" >/dev/null 2>&1 || true
+    wait "${LOG_TEE_PID}" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${LOG_PIPE:-}" && -p "${LOG_PIPE}" ]]; then
+    rm -f "${LOG_PIPE}" || true
+  fi
+
   if [[ ${exit_code} -ne 0 ]]; then
     log "Build failed. See ${LOG_FILE}"
     log "Temporary files kept at: ${WORK_DIR}"
@@ -60,7 +68,11 @@ trap cleanup EXIT
 # Prepare log file and mirror output to console + log.txt.
 mkdir -p "${TMP_BASE}"
 : > "${LOG_FILE}"
-exec > >(tee -a "${LOG_FILE}") 2>&1
+LOG_PIPE="${TMP_BASE}/log_${RUN_ID}.pipe"
+mkfifo "${LOG_PIPE}"
+tee -a "${LOG_FILE}" < "${LOG_PIPE}" &
+LOG_TEE_PID=$!
+exec > "${LOG_PIPE}" 2>&1
 
 log "Starting Intel build pipeline"
 log "Script dir: ${SCRIPT_DIR}"
@@ -86,14 +98,22 @@ fi
 # Resolve source DMG path:
 # 1) explicit argument
 # 2) ../Codex.dmg
-# 3) single *.dmg in parent directory (if present)
+# 3) ./Codex.dmg
+# 4) single *.dmg in parent directory (if present)
 if [[ $# -eq 1 ]]; then
   INPUT_DMG="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 else
   if [[ -f "${SCRIPT_PARENT_DIR}/Codex.dmg" ]]; then
     INPUT_DMG="${SCRIPT_PARENT_DIR}/Codex.dmg"
+  elif [[ -f "${SCRIPT_DIR}/Codex.dmg" ]]; then
+    INPUT_DMG="${SCRIPT_DIR}/Codex.dmg"
   else
-    mapfile -t found_dmgs < <(find "${SCRIPT_PARENT_DIR}" -maxdepth 1 -type f -name "*.dmg" ! -name "$(basename "${OUTPUT_DMG}")" | sort)
+    FOUND_DMGS_LIST="${WORK_DIR}/found_dmgs.txt"
+    find "${SCRIPT_PARENT_DIR}" -maxdepth 1 -type f -name "*.dmg" ! -name "$(basename "${OUTPUT_DMG}")" | sort > "${FOUND_DMGS_LIST}"
+    found_dmgs=()
+    while IFS= read -r line; do
+      [[ -n "${line}" ]] && found_dmgs+=("${line}")
+    done < "${FOUND_DMGS_LIST}"
     if [[ ${#found_dmgs[@]} -eq 0 ]]; then
       die "No source DMG found. Put Codex.dmg next to this repo folder (../Codex.dmg) or pass a path."
     fi
@@ -162,6 +182,12 @@ NP_VERSION="$(node -p "require(process.argv[1]).version" "${NP_PKG}")"
 log "Detected Electron version: ${ELECTRON_VERSION}"
 log "Detected better-sqlite3 version: ${BS_VERSION}"
 log "Detected node-pty version: ${NP_VERSION}"
+
+# Isolate npm cache under the work dir to avoid permission issues.
+NPM_CACHE_DIR="${WORK_DIR}/npm-cache"
+mkdir -p "${NPM_CACHE_DIR}"
+export NPM_CONFIG_CACHE="${NPM_CACHE_DIR}"
+export npm_config_cache="${NPM_CACHE_DIR}"
 
 # Build a temporary project to fetch x64 Electron/runtime artifacts.
 log "Preparing x64 build project"

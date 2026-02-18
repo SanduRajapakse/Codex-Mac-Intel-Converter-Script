@@ -19,7 +19,7 @@ This is an unofficial adaptation approach, similar in spirit to the Linux commun
 
 ## Quick usage
 
-1. Put your original `Codex.dmg` next to the repo folder (not inside it), so it is available as `../Codex.dmg`.
+1. Put your original `Codex.dmg` next to the repo folder (not inside it), so it is available as `../Codex.dmg` (or place it in the repo root as `./Codex.dmg`).
 2. Run:
 
 ```bash
@@ -38,5 +38,10 @@ Or:
 - `CodexAppMacIntel.dmg` — rebuilt Intel-targeted output
 - `log.txt` — full build log
 - `.tmp/` — temporary build workspace
+
+## Notes
+
+- DMG search order: explicit path argument → `../Codex.dmg` → `./Codex.dmg` → a single `.dmg` in the parent folder.
+- npm cache is scoped under `.tmp/` during the build to avoid permission issues with `~/.npm`.
 
 If you have problems, ask your current Codex :)
